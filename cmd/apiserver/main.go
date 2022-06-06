@@ -12,7 +12,7 @@ var (
 	configPath string
 )
 
-func onot() {
+func init() {
 	flag.StringVar(&configPath, "config-path", "configs/apiserver.toml", "path to congif file")
 }
 
@@ -27,7 +27,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	s := apiserver.New(config)
+	s := apiserver.newServer(config)
 
 	if err := s.Start(); err != nil {
 		log.Fatal(err)
