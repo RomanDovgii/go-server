@@ -5,16 +5,21 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/RomanDovgii/go-restapi/internal/app/model"
 	"github.com/RomanDovgii/go-restapi/internal/app/store"
+	"github.com/google/uuid"
+	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
+	"github.com/sirupsen/logrus"
 )
 
 const (
 	sessionName        = "check"
 	ctxKeyUser  ctxKey = iota
+	ctxKeyRequestID
 )
 
 var (
@@ -26,6 +31,7 @@ type ctxKey int8
 
 type server struct {
 	router       *mux.Router
+	logger       *logrus.Logger
 	store        store.Store
 	sessionStore sessions.Store
 }
@@ -33,6 +39,7 @@ type server struct {
 func newServer(store store.Store, sessionStore sessions.Store) *server {
 	s := &server{
 		router:       mux.NewRouter(),
+		logger:       logrus.New(),
 		store:        store,
 		sessionStore: sessionStore,
 	}
@@ -47,7 +54,54 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) configureRouter() {
+	s.router.Use(s.setRequestID)
+	s.router.Use(s.logRequest)
+	s.router.Use(handlers.CORS(handlers.AllowedOrigins([]string{"*"})))
 	s.router.HandleFunc("/users", s.handleUsersCreate()).Methods("POST")
+	s.router.HandleFunc("/sessions", s.handleSessionsCreate()).Methods("POST")
+
+	private := s.router.PathPrefix("/private").Subrouter()
+	private.Use(s.authenticateUser)
+	private.HandleFunc("/whoami", s.handleWhoami())
+}
+
+func (s *server) setRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := uuid.New().String()
+		w.Header().Set("X-Request-ID", id)
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyRequestID, id)))
+	})
+}
+
+func (s *server) logRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger := s.logger.WithFields(logrus.Fields{
+			"remote_addr": r.RemoteAddr,
+			"request_id":  r.Context().Value(ctxKeyRequestID),
+		})
+		logger.Infof("started %s %s", r.Method, r.RequestURI)
+
+		start := time.Now()
+		rw := &responseWriter{w, http.StatusOK}
+		next.ServeHTTP(rw, r)
+
+		var level logrus.Level
+		switch {
+		case rw.code >= 500:
+			level = logrus.ErrorLevel
+		case rw.code >= 400:
+			level = logrus.WarnLevel
+		default:
+			level = logrus.InfoLevel
+		}
+		logger.Logf(
+			level,
+			"completed with %d %s in %v",
+			rw.code,
+			http.StatusText(rw.code),
+			time.Now().Sub(start),
+		)
+	})
 }
 
 func (s *server) authenticateUser(next http.Handler) http.Handler {
@@ -75,14 +129,8 @@ func (s *server) authenticateUser(next http.Handler) http.Handler {
 }
 
 func (s *server) handleUsersCreate() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-
-	}
-}
-
-func (s *server) handleUserCreate() http.HandlerFunc {
 	type request struct {
-		Email    string `json:"emai"`
+		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
 
@@ -107,7 +155,7 @@ func (s *server) handleUserCreate() http.HandlerFunc {
 	}
 }
 
-func (s *server) handleSessionCreate() http.HandlerFunc {
+func (s *server) handleSessionsCreate() http.HandlerFunc {
 	type request struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -121,7 +169,7 @@ func (s *server) handleSessionCreate() http.HandlerFunc {
 		}
 
 		u, err := s.store.User().FindByEmail(req.Email)
-		if err != nil || !u.ComparePassword((req.Password)) {
+		if err != nil || !u.ComparePassword(req.Password) {
 			s.error(w, r, http.StatusUnauthorized, errIncorrectEmailOrPassword)
 			return
 		}
@@ -139,6 +187,12 @@ func (s *server) handleSessionCreate() http.HandlerFunc {
 		}
 
 		s.respond(w, r, http.StatusOK, nil)
+	}
+}
+
+func (s *server) handleWhoami() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.respond(w, r, http.StatusOK, r.Context().Value(ctxKeyUser).(*model.User))
 	}
 }
 

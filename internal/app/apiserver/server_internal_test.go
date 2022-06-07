@@ -42,9 +42,9 @@ func testServer_AuthenticateUser(t *testing.T) {
 	secretKey := []byte("secret")
 	s := newServer(store, sessions.NewCookieStore(secretKey))
 	sc := securecookie.New(secretKey, nil)
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mw := s.authenticateUser(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	})
+	}))
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -52,7 +52,7 @@ func testServer_AuthenticateUser(t *testing.T) {
 			req, _ := http.NewRequest(http.MethodGet, "/", nil)
 			cookieStr, _ := sc.Encode(sessionName, tc.cookieValue)
 			req.Header.Set("Cookie", fmt.Sprintf("%s=%s", sessionName, cookieStr))
-			s.authenticateUser(handler).ServeHTTP(rec, req)
+			mw.ServeHTTP(rec, req)
 			assert.Equal(t, tc.expectedCode, rec.Code)
 		})
 	}

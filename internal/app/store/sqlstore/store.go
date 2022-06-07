@@ -4,7 +4,6 @@ import (
 	"database/sql"
 
 	"github.com/RomanDovgii/go-restapi/internal/app/store"
-	_ "github.com/lib/pq"
 )
 
 type Store struct {
