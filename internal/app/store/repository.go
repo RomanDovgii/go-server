@@ -7,3 +7,12 @@ type UserRepository interface {
 	Find(int) (*model.User, error)
 	FindByEmail(string) (*model.User, error)
 }
+
+type WorkRepository interface {
+	Create(*model.Work) error
+	Find(int) (*model.Work, error)
+	FindByName(string) (*model.Work, error)
+	Delete(int, int) error
+	FindAll(int, int) ([]model.Work, error)
+	FindAllByName(string, int, int) ([]model.Work, error)
+}

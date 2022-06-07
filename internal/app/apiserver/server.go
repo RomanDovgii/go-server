@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/RomanDovgii/go-restapi/internal/app/model"
@@ -57,11 +58,17 @@ func (s *server) configureRouter() {
 	s.router.Use(s.setRequestID)
 	s.router.Use(s.logRequest)
 	s.router.Use(handlers.CORS(handlers.AllowedOrigins([]string{"*"})))
-	s.router.HandleFunc("/users", s.handleUsersCreate()).Methods("POST")
-	s.router.HandleFunc("/sessions", s.handleSessionsCreate()).Methods("POST")
+	s.router.HandleFunc("/api/help", s.handleHelp()).Methods("GET")
+	s.router.HandleFunc("/works/{pagination}/{page}", s.handleWorks()).Methods("Get")
+	s.router.HandleFunc("/works/{pagination}/{page}/{name}", s.handleWorksByName()).Methods("Get")
+	s.router.HandleFunc("work/{id}", s.handleWork()).Methods("Get")
+	s.router.HandleFunc("/create-user", s.handleUsersCreate()).Methods("POST")
+	s.router.HandleFunc("/session", s.handleSessionsCreate()).Methods("POST")
 
 	private := s.router.PathPrefix("/private").Subrouter()
 	private.Use(s.authenticateUser)
+	private.HandleFunc("/create-work", s.handleCreateWork()).Methods("POST")
+	private.HandleFunc("/delete-work", s.handleDeleteWork()).Methods("POST")
 	private.HandleFunc("/whoami", s.handleWhoami())
 }
 
@@ -155,6 +162,36 @@ func (s *server) handleUsersCreate() http.HandlerFunc {
 	}
 }
 
+func (s *server) handleCreateWork() http.HandlerFunc {
+	type request struct {
+		CreatorId     int      `json:"creator"`
+		Name          string   `json:"name"`
+		Description   string   `json:"description"`
+		DocumentLinks []string `json:"links"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		req := &request{}
+		if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+			s.error(w, r, http.StatusBadRequest, err)
+			return
+		}
+
+		work := &model.Work{
+			CreatorId:     req.CreatorId,
+			Name:          req.Name,
+			Description:   req.Description,
+			DocumentLinks: req.DocumentLinks,
+		}
+
+		if err := s.store.Work().Create(work); err != nil {
+			s.error(w, r, http.StatusUnprocessableEntity, err)
+			return
+		}
+		s.respond(w, r, http.StatusCreated, work)
+	}
+}
+
 func (s *server) handleSessionsCreate() http.HandlerFunc {
 	type request struct {
 		Email    string `json:"email"`
@@ -193,6 +230,114 @@ func (s *server) handleSessionsCreate() http.HandlerFunc {
 func (s *server) handleWhoami() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		s.respond(w, r, http.StatusOK, r.Context().Value(ctxKeyUser).(*model.User))
+	}
+}
+
+func (s *server) handleHelp() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		i := []string{
+			"/api/help - shows all available api requests",
+			"/create-user - allows you to create users",
+			"/session - allows you to authorize users",
+			"/create-work - allows you to create works",
+			"/works/$pagination-number - allows you to get all works",
+			"/find-work/$some-text/$pagination-number/$page - allows you to search for a work with a specific number of works and move through pages",
+			"/delete-work/$work-id - allows authorized user to delete a work with the specific id",
+		}
+		s.respond(w, r, http.StatusOK, i)
+	}
+}
+
+func (s *server) handleDeleteWork() http.HandlerFunc {
+	type request struct {
+		CreatorId int `json:"creator"`
+		WorkId    int `json:"work"`
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
+		req := &request{}
+		if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+			s.error(w, r, http.StatusBadRequest, err)
+			return
+		}
+
+		ci := req.CreatorId
+		wi := req.WorkId
+
+		if err := s.store.Work().Delete(wi, ci); err != nil {
+			s.error(w, r, http.StatusUnprocessableEntity, err)
+			return
+		}
+		s.respond(w, r, http.StatusCreated, nil)
+	}
+}
+
+func (s *server) handleWork() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		type request struct {
+			Id int `json:"id"`
+		}
+
+		req := &request{}
+		if err := json.NewDecoder(r.Body).Decode(req); err != nil {
+			s.error(w, r, http.StatusBadRequest, err)
+			return
+		}
+
+		id := req.Id
+
+		work, err := s.store.Work().Find(id)
+		if err != nil {
+			s.error(w, r, http.StatusUnprocessableEntity, err)
+			return
+		}
+		s.respond(w, r, http.StatusCreated, work)
+	}
+}
+
+func (s *server) handleWorks() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+
+		pagination, err := strconv.Atoi(r.URL.Query().Get("pagination"))
+		if err != nil {
+			s.error(w, r, http.StatusUnprocessableEntity, err)
+			return
+		}
+		page, err := strconv.Atoi(r.URL.Query().Get("page"))
+		if err != nil {
+			s.error(w, r, http.StatusUnprocessableEntity, err)
+			return
+		}
+
+		works, err := s.store.Work().FindAll(pagination, page)
+		if err != nil {
+			s.error(w, r, http.StatusUnprocessableEntity, err)
+			return
+		}
+		s.respond(w, r, http.StatusCreated, works)
+	}
+}
+
+func (s *server) handleWorksByName() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		pagination, err := strconv.Atoi(r.URL.Query().Get("pagination"))
+		if err != nil {
+			s.error(w, r, http.StatusUnprocessableEntity, err)
+			return
+		}
+		page, err := strconv.Atoi(r.URL.Query().Get("page"))
+		if err != nil {
+			s.error(w, r, http.StatusUnprocessableEntity, err)
+			return
+		}
+
+		works, err := s.store.Work().FindAllByName(name, pagination, page)
+		if err != nil {
+			s.error(w, r, http.StatusUnprocessableEntity, err)
+			return
+		}
+		s.respond(w, r, http.StatusCreated, works)
 	}
 }
 
