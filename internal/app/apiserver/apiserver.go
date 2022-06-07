@@ -6,6 +6,7 @@ import (
 
 	"github.com/RomanDovgii/go-restapi/internal/app/store/sqlstore"
 	"github.com/gorilla/sessions"
+	_ "github.com/lib/pq"
 )
 
 func Start(config *Config) error {
